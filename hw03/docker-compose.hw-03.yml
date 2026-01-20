@@ -1,0 +1,19 @@
+networks:
+  net:
+    driver: bridge
+
+services:
+  postgres_host:
+    image: postgres:16-alpine
+    container_name: "postgres_host"
+    hostname: "postgres_host"
+    environment:
+      - POSTGRES_USER=${ENV_POSTGRES_USER}
+      - POSTGRES_PASSWORD=${ENV_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${ENV_POSTGRES_DB}
+    volumes:
+      - ./data:/tmp
+    networks:
+      - net
+    ports:
+      - "5432:5432"
