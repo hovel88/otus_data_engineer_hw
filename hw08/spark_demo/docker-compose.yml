@@ -1,0 +1,18 @@
+networks:
+  net:
+    driver: bridge
+
+services:
+  spark-local:
+    build: .
+    container_name: "spark-local"
+    hostname: "spark_local"
+    command: tail -f /dev/null
+    volumes:
+      - ./scripts:/app/scripts
+      - ./data/inbox:/app/in_data
+      - ./data/outbox:/app/out_data
+    networks:
+      - net
+    ports:
+      - "4040:4040"   # Spark UI
