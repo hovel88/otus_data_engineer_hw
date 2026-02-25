@@ -1,0 +1,108 @@
+---
+- name: Install Docker on virtual machines
+  hosts: metabase
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install packages needed for script
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+
+    - name: Create directory for GPG-key
+      file:
+        path: '/etc/apt/keyrings'
+        state: directory
+        mode: '0755'
+
+    - name: Download Docker GPG-key
+      shell: |
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        sudo chmod a+r /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Add Docker repository
+      shell: |
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+      args:
+        creates: /etc/apt/sources.list.d/docker.list
+
+    - name: Update apt cache after adding Docker repo
+      apt:
+        update_cache: yes
+
+    - name: Install Docker packages with GPG-key
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+    - name: Ensure group 'docker' exists
+      group:
+        name: docker
+        state: present
+
+    - name: Add the user to the group 'docker'
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+        create_home: no
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Reset ssh connection to allow user changes to affect 'current login user'
+      ansible.builtin.meta: reset_connection
+
+    - name: Verify Docker installation
+      become: false
+      command: docker --version
+      register: docker_version
+
+    - name: Display Docker version
+      become: false
+      debug:
+        msg: "Docker installed successfully: {{ docker_version.stdout }}"
+
+    - name: Copy 'compose.yml' file to target host
+      become: false
+      copy:
+        src: './files/compose.yml'
+        dest: '~/compose.yml'
+        remote_src: no
+
+    - name: Start Metabase services
+      become: false
+      community.docker.docker_compose_v2:
+        state: present
+        project_src: '~'
+      register: output
+
+    - name: Show results
+      become: false
+      debug:
+        msg:
+          - "Connection information:"
+          - "  HTTP interface: http://{{ ansible_host }}:3000"
+          - "Installation summary:"
+          - "  Failed: {{ output.failed }}"
+          - "  Error lines: {{ output.stderr_lines }}"

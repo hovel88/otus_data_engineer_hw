@@ -1,0 +1,136 @@
+---
+- name: Install and configure ClickHouse on virtual machine
+  hosts: clickhouse
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - dirmngr
+          - gnupg
+          - wget
+        state: present
+
+    - name: Check if SSE 4.2 is supported
+      shell: grep -q sse4_2 /proc/cpuinfo && echo "supported" || echo "not supported"
+      register: sse_check
+      changed_when: false
+
+    - name: Display SSE 4.2 support status
+      debug:
+        msg: "SSE 4.2 {{ sse_check.stdout }} on this system"
+
+    - name: Add ClickHouse GPG-key
+      shell: |
+        apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 8919F6BD2B48D754
+      args:
+        warn: false
+      register: gpg_key_result
+      changed_when: "'imported' in gpg_key_result.stdout"
+
+    - name: Add ClickHouse repository
+      shell: |
+        echo "deb https://packages.clickhouse.com/deb stable main" | tee /etc/apt/sources.list.d/clickhouse.list
+      args:
+        creates: /etc/apt/sources.list.d/clickhouse.list
+
+    - name: Update apt cache after adding ClickHouse repo
+      apt:
+        update_cache: yes
+
+    - name: Install ClickHouse server and client
+      apt:
+        name:
+          - clickhouse-server
+          - clickhouse-client
+        state: present
+
+    - name: Create configuration directory for custom configs
+      file:
+        path: /etc/clickhouse-server/config.d
+        state: directory
+        owner: clickhouse
+        group: clickhouse
+        mode: '0755'
+
+    - name: Configure ClickHouse to listen on all interfaces
+      copy:
+        dest: /etc/clickhouse-server/config.d/available_connections.xml
+        content: |
+          <clickhouse>
+              <listen_host>0.0.0.0</listen_host>
+          </clickhouse>
+        owner: clickhouse
+        group: clickhouse
+        mode: '0644'
+      notify: restart clickhouse
+
+    - name: Start ClickHouse service
+      systemd:
+        name: clickhouse-server
+        state: started
+        enabled: yes
+      register: clickhouse_started
+
+    - name: Wait for ClickHouse to be ready
+      wait_for:
+        port: 8123
+        host: localhost
+        delay: 5
+        timeout: 30
+      when: clickhouse_started is changed
+
+    - name: Create trips table
+      command: clickhouse-client --query "{{ lookup('file', './files/create_table_trips.sql') }}"
+      register: table_creation
+      changed_when: table_creation.rc == 0
+
+    - name: Check if trips table is empty
+      command: clickhouse-client --query "SELECT COUNT() FROM trips"
+      register: row_count
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display current row count
+      debug:
+        msg: "Current trips table contains {{ row_count.stdout }} rows"
+
+    - name: Load data into trips table
+      shell: |
+        clickhouse-client --time --query "{{ lookup('file', './files/load_data_trips.sql') }}"
+      when: row_count.stdout == "0" or row_count.stdout is not defined
+      async: 1800
+      poll: 10
+
+    - name: Get final row count
+      command: clickhouse-client --query "SELECT COUNT() FROM trips"
+      register: final_row_count
+      changed_when: false
+
+    - name: Display connection information
+      debug:
+        msg:
+          - "ClickHouse installation completed!"
+          - "Data loading completed successfully!"
+          - "Total rows loaded: {{ final_row_count.stdout }}"
+          - "Connection information:"
+          - "  Database: default"
+          - "  Table: trips"
+          - "  Username: default (no password by default)"
+          - "  HTTP interface: http://{{ ansible_host }}:8123"
+          - "  Native protocol: {{ ansible_host }}:9000"
+
+  handlers:
+    - name: restart clickhouse
+      systemd:
+        name: clickhouse-server
+        state: restarted

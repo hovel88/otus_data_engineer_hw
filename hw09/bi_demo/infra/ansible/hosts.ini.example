@@ -1,0 +1,11 @@
+[metabase]
+metabase_1 ansible_host=<metabase_ip>
+
+[metabase:vars]
+ansible_user=yc-user
+
+[clickhouse]
+clickhouse_1 ansible_host=<clickhouse_ip>
+
+[clickhouse:vars]
+ansible_user=yc-user
